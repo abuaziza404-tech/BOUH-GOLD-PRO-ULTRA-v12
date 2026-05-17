@@ -1,0 +1,121 @@
+name: Build BOUH GOLD PRO ULTRA v12.3
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  build-android-apk:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Locate latest ZIP package
+        run: |
+          echo "Searching for ZIP packages in repository root..."
+          ZIP_FILE=$(find . -maxdepth 1 -type f -name "*.zip" | sort | tail -n 1)
+
+          if [ -z "$ZIP_FILE" ]; then
+            echo "ERROR: No ZIP file found in repository root."
+            echo "Upload BOUH_GOLD_PRO_ULTRA_v12_3_SOVEREIGN_GIS_AI.zip to the root of the repository."
+            exit 1
+          fi
+
+          echo "Using ZIP file: $ZIP_FILE"
+          echo "ZIP_FILE=$ZIP_FILE" >> "$GITHUB_ENV"
+
+      - name: Extract Flutter project
+        run: |
+          rm -rf extracted_app
+          mkdir extracted_app
+
+          unzip -q "$ZIP_FILE" -d extracted_app
+
+          PUBSPEC_FILE=$(find extracted_app -type f -name "pubspec.yaml" | head -n 1)
+
+          if [ -z "$PUBSPEC_FILE" ]; then
+            echo "ERROR: pubspec.yaml was not found inside the ZIP package."
+            exit 1
+          fi
+
+          PROJECT_DIR=$(dirname "$PUBSPEC_FILE")
+
+          echo "Flutter project found at: $PROJECT_DIR"
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Flutter stable
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Show Flutter version
+        run: flutter --version
+
+      - name: Generate Android platform
+        run: |
+          cd "$PROJECT_DIR"
+          flutter create . \
+            --platforms=android \
+            --project-name bouh_gold_pro_ultra \
+            --org com.bouh.gold
+
+      - name: Clean project
+        run: |
+          cd "$PROJECT_DIR"
+          flutter clean
+
+      - name: Install dependencies
+        run: |
+          cd "$PROJECT_DIR"
+          flutter pub get
+
+      - name: Analyze project
+        run: |
+          cd "$PROJECT_DIR"
+          flutter analyze || true
+
+      - name: Build release APK
+        run: |
+          cd "$PROJECT_DIR"
+          flutter build apk --release
+
+      - name: Prepare APK file
+        run: |
+          mkdir -p release_files
+
+          APK_PATH="$PROJECT_DIR/build/app/outputs/flutter-apk/app-release.apk"
+
+          if [ ! -f "$APK_PATH" ]; then
+            echo "ERROR: APK was not generated."
+            exit 1
+          fi
+
+          cp "$APK_PATH" release_files/BOUH-GOLD-PRO-ULTRA-v12-3-SOVEREIGN.apk
+
+          ls -lh release_files
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: BOUH-GOLD-PRO-ULTRA-v12-3-SOVEREIGN-APK
+          path: release_files/BOUH-GOLD-PRO-ULTRA-v12-3-SOVEREIGN.apk
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: bouh-v12-3-sovereign-${{ github.run_number }}
+          name: BOUH GOLD PRO ULTRA v12.3 Sovereign Build ${{ github.run_number }}
+          files: release_files/BOUH-GOLD-PRO-ULTRA-v12-3-SOVEREIGN.apk
