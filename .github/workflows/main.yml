@@ -8,40 +8,40 @@ on:
 
 jobs:
   build_and_deploy_apk:
-    name: "Automated Production Build & Export"
+    name: "Automated Production Build"
     runs-on: ubuntu-latest
 
     steps:
-      # 1. استدعاء سورس الكود من مستودع المطور أحمد أبو عزيزة
+      # 1. جلب سورس كود منصة بوح
       - name: "Checkout Sovereign Repository"
         uses: actions/checkout@v4
 
-      # 2. تهيئة بيئة جافا اللازمة لبناء حزم الأندرويد
-      - name: "Setup Java Development Kit Environment"
+      # 2. تهيئة بيئة جافا المتوافقة
+      - name: "Setup Java Development Kit"
         uses: actions/setup-java@v4
         with:
-          distribution: 'zulu'
+          distribution: 'temurin'
           java-version: '17'
 
-      # 3. إعداد وتثبيت محرك فلاتر المستقر
+      # 3. تثبيت محرك فلاتر المستقر تلقائياً
       - name: "Setup Flutter Framework"
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.19.x' # أو اتركها فارغة لجلب أحدث إصدار مستقر تلقائياً
           channel: 'stable'
           cache: true
 
-      # 4. جلب وتحديث كافة المكتبات والمكونات الميدانية (Dependencies)
-      - name: "Install Project Dependencies & Library Packages"
-        run: flutter pub get
+      # 4. تنظيف وتحديث الحزم والمكتبات الجيولوجية
+      - name: "Install Project Dependencies"
+        run: |
+          flutter pub get
 
-      # 5. بناء التطبيق وإصدار حزم الـ APK بصيغة Release التكتيكية
-      - name: "Compile and Build Production Release APK"
-        run: flutter build apk --release --split-per-abi
+      # 5. بناء الحزمة النهائية بصيغة Release العامة
+      - name: "Compile and Build APK"
+        run: flutter build apk --release
 
-      # 6. تصدير الحزم المبنية وحفظها كملفات جاهزة للتحميل الفوري من جيت هاب
-      - name: "Upload and Export Artifacts to Repository Release Panel"
+      # 6. رفع حزمة الـ APK المستخرجة بالكامل لتفادي أخطاء المسارات
+      - name: "Upload Artifacts to Release Panel"
         uses: actions/upload-artifact@v4
         with:
-          name: "BOUH-GOLD-PRO-ULTRA-v12.3-APK"
-          path: build/app/outputs/flutter-apk/app-release-arm64-v8a.apk
+          name: "BOUH-v12.3-Build-Package"
+          path: build/app/outputs/flutter-apk/
