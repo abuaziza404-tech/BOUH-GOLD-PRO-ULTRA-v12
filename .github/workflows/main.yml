@@ -1,47 +1,2582 @@
-name: "BOUH GOLD PRO ULTRA CI/CD ENGINE"
+/*
+===============================================================================
+BOUH GOLD PRO ULTRA V12.3
+Sovereign 2026 Mining & Subsurface Operations
+Technical Authority System of Eng. Ahmed Abuaziza
 
-on:
-  push:
-    branches: [ "main", "master" ]
-  pull_request:
-    branches: [ "main", "master" ]
+Single-file Flutter implementation:
+  lib/main.dart
 
-jobs:
-  build_and_deploy_apk:
-    name: "Automated Production Build"
-    runs-on: ubuntu-latest
+Purpose:
+  A tactical geospatial Android field application for subsurface exploration,
+  live map visualization, offline-first tile caching, geophysical tap analysis,
+  internal data library calibration, online/offline AI command terminal, KML/CSV
+  export, and native app-link sharing.
 
-    steps:
-      # 1. جلب سورس كود منصة بوح
-      - name: "Checkout Sovereign Repository"
-        uses: actions/checkout@v4
+Core systems inside this file:
+  1. Sticky tactical credentials header.
+  2. flutter_map real tile engine:
+     - Google Hybrid/Satellite template support
+     - USGS Topographic base
+     - NASA GIBS imagery
+     - PlanetScope/Maxar secure user URL injection
+  3. 30-day field tile cache named:
+     BOUH_GOLD_PRO_ULTRA_TILE_CACHE
+  4. Geophysical processor:
+     - Quartz-Gold Index = SWIR2 / SWIR1
+     - Iron Index = Red / Blue
+     - Alteration Index = (SWIR1 + SWIR2) / NIR
+     - Slope risk / magnetic / gravity anomaly emulation
+  5. Vein Core Rule:
+     Quartz-Gold Index >= 0.850 injects a cyan/gold polyline matrix.
+  6. Loader Safe Route Rule:
+     DEM matrix route danger checker.
+  7. Screening Plant Telemetry Rule:
+     Ore tons + mesh size -> estimated recovery/grade/grams.
+  8. Internal Library Dashboard:
+     Internal region files calibrate the processor dynamically.
+  9. OpenAIService:
+     https://api.openai.com/v1/chat/completions
+     with offline Arabic/English regex command parser.
+  10. Export:
+      KML/CSV generation from pinned targets using share_plus.
+  11. Share App Download Link:
+      native OS share sheet.
 
-      # 2. تهيئة بيئة جافا المتوافقة
-      - name: "Setup Java Development Kit"
-        uses: actions/setup-java@v4
-        with:
-          distribution: 'temurin'
-          java-version: '17'
+Required pubspec dependencies:
+  flutter_map
+  latlong2
+  dio
+  dio_cache_interceptor
+  path_provider
+  share_plus
+  geolocator
+  hive
+  crypto
 
-      # 3. تثبيت محرك فلاتر المستقر تلقائياً
-      - name: "Setup Flutter Framework"
-        uses: subosito/flutter-action@v2
-        with:
-          channel: 'stable'
-          cache: true
+Map licensing note:
+  Some imagery providers require explicit authorization. PlanetScope and Maxar
+  are implemented via secure user-provided URL/template/token injection. Use only
+  tile services you are legally authorized to access.
 
-      # 4. تنظيف وتحديث الحزم والمكتبات الجيولوجية
-      - name: "Install Project Dependencies"
-        run: |
-          flutter pub get
+Geological notice:
+  This application provides exploration intelligence and field triage. It does
+  not constitute economic proof. Final economic validation requires:
+  field validation + assay + QA/QC + licensed geological review.
+===============================================================================
+*/
 
-      # 5. بناء الحزمة النهائية بصيغة Release العامة
-      - name: "Compile and Build APK"
-        run: flutter build apk --release
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+import 'dart:math' as math;
+import 'dart:ui' as ui;
 
-      # 6. رفع حزمة الـ APK المستخرجة بالكامل لتفادي أخطاء المسارات
-      - name: "Upload Artifacts to Release Panel"
-        uses: actions/upload-artifact@v4
-        with:
-          name: "BOUH-v12.3-Build-Package"
-          path: build/app/outputs/flutter-apk/
+import 'package:crypto/crypto.dart';
+import 'package:dio/dio.dart';
+import 'package:dio_cache_interceptor/dio_cache_interceptor.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_map/flutter_map.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:hive/hive.dart';
+import 'package:latlong2/latlong.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  runApp(const BouhGoldProUltraApp());
+}
+
+class BouhGoldProUltraApp extends StatelessWidget {
+  const BouhGoldProUltraApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: AppText.appName,
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData(
+        brightness: Brightness.dark,
+        scaffoldBackgroundColor: AppColors.obsidian,
+        useMaterial3: true,
+        colorScheme: const ColorScheme.dark(
+          primary: AppColors.gold,
+          secondary: AppColors.cyan,
+          surface: AppColors.matteTeal,
+        ),
+      ),
+      home: const SovereignAppShell(),
+    );
+  }
+}
+
+class AppColors {
+  static const Color obsidian = Color(0xFF05070A);
+  static const Color matteTeal = Color(0xFF0A1110);
+  static const Color gold = Color(0xFFD4AF37);
+  static const Color cyan = Color(0xFF00F3FF);
+  static const Color danger = Color(0xFFFF3434);
+  static const Color amber = Color(0xFFFFB300);
+  static const Color white = Color(0xFFF1F1F1);
+}
+
+class AppText {
+  static const String appName = 'BOUH GOLD PRO ULTRA V12.3';
+  static const String header = 'BOUH GOLD PRO ULTRA | System of Eng. Ahmed Abuaziza';
+  static const String subtitle = 'Sovereign 2026 Mining & Subsurface Operations';
+  static const String workspace = 'BOUH_GOLD_PRO_ULTRA_WORKSPACE';
+  static const String tileCache = 'BOUH_GOLD_PRO_ULTRA_TILE_CACHE';
+  static const String secureBox = 'bouh_gold_secure_aes_box';
+  static const String keyFile = '.bouh_aes_256.key';
+  static const String openAiEndpoint = 'https://api.openai.com/v1/chat/completions';
+  static const String appDownloadLink =
+      'https://github.com/abuaziza404-tech/BOUH-GOLD-PRO-ULTRA-v12/releases/latest';
+}
+
+class SovereignAppShell extends StatefulWidget {
+  const SovereignAppShell({super.key});
+
+  @override
+  State<SovereignAppShell> createState() => _SovereignAppShellState();
+}
+
+class _SovereignAppShellState extends State<SovereignAppShell> {
+  late final AppController controller;
+
+  @override
+  void initState() {
+    super.initState();
+    controller = AppController();
+    controller.boot();
+  }
+
+  @override
+  void dispose() {
+    controller.disposeController();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: controller,
+      builder: (context, _) {
+        return Directionality(
+          textDirection: TextDirection.rtl,
+          child: Scaffold(
+            body: Stack(
+              children: [
+                TacticalMap(controller: controller),
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: CustomPaint(
+                      painter: GeophysicalOverlayPainter(
+                        center: controller.mapCenter,
+                        lastResult: controller.lastResult,
+                        tick: controller.renderTick,
+                      ),
+                    ),
+                  ),
+                ),
+                Positioned(
+                  top: MediaQuery.of(context).padding.top + 10,
+                  left: 12,
+                  right: 12,
+                  child: CredentialsHeader(
+                    controller: controller,
+                    onLayers: () => Panels.showLayerManager(context, controller),
+                    onLibrary: () => Panels.showLibrary(context, controller),
+                    onAi: () => Panels.showTerminal(context, controller),
+                    onSettings: () => Panels.showSettings(context, controller),
+                  ),
+                ),
+                Positioned(
+                  left: 12,
+                  right: 12,
+                  bottom: MediaQuery.of(context).padding.bottom + 12,
+                  child: TacticalBottomBar(
+                    onGps: () => controller.goToGps(context),
+                    onRoute: () => Panels.showLoaderRoute(context, controller),
+                    onPlant: () => Panels.showScreeningPlant(context, controller),
+                    onExport: () => Panels.showExport(context, controller),
+                    onShare: () => controller.shareAppLink(),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class AppController extends ChangeNotifier {
+  final MapController mapController = MapController();
+  final GeophysicalProcessor processor = GeophysicalProcessor();
+  final OpenAIService openAIService = OpenAIService();
+  final Distance distance = const Distance();
+
+  LatLng mapCenter = const LatLng(19.8255, 36.9532);
+  double zoom = 13.5;
+  int renderTick = 0;
+
+  Directory? workspaceDir;
+  Box? secureBox;
+  CachedDioTileProvider? tileProvider;
+
+  LatLng? gpsPoint;
+  LatLng? lastTap;
+  GeophysicalResult? lastResult;
+  List<LatLng> veinPolyline = [];
+  List<GeophysicalResult> pinnedResults = [];
+
+  String planetTemplate = '';
+  String planetToken = '';
+  String maxarTemplate = '';
+  String maxarToken = '';
+  String appLink = AppText.appDownloadLink;
+
+  AIConfig aiConfig = const AIConfig(
+    online: false,
+    endpoint: AppText.openAiEndpoint,
+    apiKey: '',
+    model: 'gpt-4o',
+  );
+
+  double spectralGain = 1.0;
+  double magneticGain = 1.0;
+  double slopeGain = 1.0;
+
+  List<InternalLibraryFile> library = InternalLibraryFile.defaults();
+  late List<TileLayerConfig> layers;
+
+  AppController() {
+    layers = [
+      TileLayerConfig(
+        id: 'google_hybrid',
+        title: 'Google Hybrid',
+        subtitle: 'قمر صناعي مع أسماء الطرق والمعالم',
+        urlTemplate: 'https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',
+        enabled: true,
+        opacity: 1.0,
+        maxZoom: 21,
+      ),
+      TileLayerConfig(
+        id: 'google_satellite',
+        title: 'Google Satellite',
+        subtitle: 'صورة قمر صناعي خام',
+        urlTemplate: 'https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}',
+        enabled: false,
+        opacity: 1.0,
+        maxZoom: 21,
+      ),
+      TileLayerConfig(
+        id: 'usgs_topo',
+        title: 'USGS Topographic',
+        subtitle: 'تضاريس وقاعدة طبوغرافية',
+        urlTemplate:
+            'https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapServer/tile/{z}/{y}/{x}',
+        enabled: false,
+        opacity: 0.92,
+        maxZoom: 16,
+      ),
+      TileLayerConfig(
+        id: 'nasa_true_color',
+        title: 'NASA GIBS True Color',
+        subtitle: 'NASA صورة طبيعية حديثة',
+        urlTemplate:
+            'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_SNPP_CorrectedReflectance_TrueColor/default/2024-01-01/GoogleMapsCompatible_Level9/{z}/{y}/{x}.jpg',
+        enabled: false,
+        opacity: 0.86,
+        maxZoom: 9,
+      ),
+      TileLayerConfig(
+        id: 'nasa_false_color',
+        title: 'NASA GIBS False Color',
+        subtitle: 'لون كاذب يساعد على فصل الغطاء السطحي',
+        urlTemplate:
+            'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_SNPP_CorrectedReflectance_BandsM11-I2-I1/default/2024-01-01/GoogleMapsCompatible_Level9/{z}/{y}/{x}.jpg',
+        enabled: false,
+        opacity: 0.78,
+        maxZoom: 9,
+      ),
+      TileLayerConfig(
+        id: 'planet',
+        title: 'PlanetScope Secure',
+        subtitle: 'رابط خاص من الإعدادات',
+        urlTemplate: '',
+        enabled: false,
+        opacity: 0.75,
+        maxZoom: 20,
+        customProvider: true,
+      ),
+      TileLayerConfig(
+        id: 'maxar',
+        title: 'Maxar Secure',
+        subtitle: 'رابط خاص من الإعدادات',
+        urlTemplate: '',
+        enabled: false,
+        opacity: 0.75,
+        maxZoom: 21,
+        customProvider: true,
+      ),
+    ];
+  }
+
+  Future<void> boot() async {
+    workspaceDir = await SecureWorkspace.ensureWorkspace();
+    secureBox = await SecureWorkspace.openEncryptedBox(workspaceDir!);
+    tileProvider = await CachedDioTileProvider.create();
+    await loadState();
+    notifyListeners();
+  }
+
+  Future<void> loadState() async {
+    final box = secureBox;
+    if (box == null) return;
+
+    planetTemplate = (box.get('planetTemplate') ?? '').toString();
+    planetToken = (box.get('planetToken') ?? '').toString();
+    maxarTemplate = (box.get('maxarTemplate') ?? '').toString();
+    maxarToken = (box.get('maxarToken') ?? '').toString();
+    appLink = (box.get('appLink') ?? AppText.appDownloadLink).toString();
+
+    spectralGain = _asDouble(box.get('spectralGain'), 1.0);
+    magneticGain = _asDouble(box.get('magneticGain'), 1.0);
+    slopeGain = _asDouble(box.get('slopeGain'), 1.0);
+
+    final ai = box.get('aiConfig');
+    if (ai is Map) {
+      aiConfig = AIConfig(
+        online: ai['online'] == true,
+        endpoint: (ai['endpoint'] ?? AppText.openAiEndpoint).toString(),
+        apiKey: (ai['apiKey'] ?? '').toString(),
+        model: (ai['model'] ?? 'gpt-4o').toString(),
+      );
+    }
+
+    final storedPins = box.get('pinnedResults');
+    if (storedPins is List) {
+      pinnedResults = storedPins
+          .whereType<Map>()
+          .map((m) => GeophysicalResult.fromMap(Map<String, dynamic>.from(m)))
+          .toList();
+    }
+
+    processor.updateCalibration(
+      spectralGain: spectralGain,
+      magneticGain: magneticGain,
+      slopeGain: slopeGain,
+    );
+  }
+
+  Future<void> saveState() async {
+    final box = secureBox;
+    if (box == null) return;
+
+    await box.put('planetTemplate', planetTemplate);
+    await box.put('planetToken', planetToken);
+    await box.put('maxarTemplate', maxarTemplate);
+    await box.put('maxarToken', maxarToken);
+    await box.put('appLink', appLink);
+    await box.put('spectralGain', spectralGain);
+    await box.put('magneticGain', magneticGain);
+    await box.put('slopeGain', slopeGain);
+    await box.put('aiConfig', aiConfig.toMap());
+    await box.put('pinnedResults', pinnedResults.map((e) => e.toMap()).toList());
+  }
+
+  List<TileLayerConfig> get activeLayers {
+    return layers
+        .map(resolveLayer)
+        .where((e) => e.enabled && e.urlTemplate.trim().isNotEmpty)
+        .toList();
+  }
+
+  TileLayerConfig resolveLayer(TileLayerConfig layer) {
+    if (layer.id == 'planet') {
+      return layer.copyWith(
+        urlTemplate: planetTemplate
+            .replaceAll('{token}', planetToken)
+            .replaceAll('{apiKey}', planetToken),
+      );
+    }
+    if (layer.id == 'maxar') {
+      return layer.copyWith(
+        urlTemplate: maxarTemplate
+            .replaceAll('{token}', maxarToken)
+            .replaceAll('{apiKey}', maxarToken),
+      );
+    }
+    return layer;
+  }
+
+  void setLayerEnabled(String id, bool value) {
+    layers = [
+      for (final l in layers) l.id == id ? l.copyWith(enabled: value) : l,
+    ];
+    notifyListeners();
+  }
+
+  void setLayerOpacity(String id, double value) {
+    layers = [
+      for (final l in layers) l.id == id ? l.copyWith(opacity: value) : l,
+    ];
+    notifyListeners();
+  }
+
+  void updateCamera(LatLng center, double newZoom) {
+    mapCenter = center;
+    zoom = newZoom;
+    renderTick++;
+    notifyListeners();
+  }
+
+  Future<void> goToGps(BuildContext context) async {
+    try {
+      var permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
+        Toast.show(context, 'صلاحية GPS غير مفعلة.');
+        return;
+      }
+
+      final pos = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+      );
+      gpsPoint = LatLng(pos.latitude, pos.longitude);
+      mapCenter = gpsPoint!;
+      mapController.move(gpsPoint!, 16);
+      notifyListeners();
+    } catch (e) {
+      Toast.show(context, 'تعذر تشغيل GPS: $e');
+    }
+  }
+
+  void analyzeTap(BuildContext context, LatLng point) {
+    final result = processor.analyze(point);
+    lastTap = point;
+    lastResult = result;
+    pinnedResults.add(result);
+
+    if (result.veinCoreTriggered) {
+      veinPolyline = processor.buildVeinPolyline(point);
+    } else {
+      veinPolyline = [];
+    }
+
+    saveState();
+    notifyListeners();
+    Panels.showAnalysis(context, result);
+  }
+
+  void calibrateWith(InternalLibraryFile file, BuildContext context) {
+    spectralGain = file.spectralGain;
+    magneticGain = file.magneticGain;
+    slopeGain = file.slopeGain;
+
+    processor.updateCalibration(
+      spectralGain: spectralGain,
+      magneticGain: magneticGain,
+      slopeGain: slopeGain,
+    );
+
+    mapCenter = file.center;
+    mapController.move(file.center, file.zoom);
+    saveState();
+    notifyListeners();
+
+    Toast.show(context, 'تمت معايرة المحرك باستخدام: ${file.title}');
+  }
+
+  Future<File> exportKml() async {
+    final dir = workspaceDir ?? await SecureWorkspace.ensureWorkspace();
+    final file = File('${dir.path}/BOUH_EXPORT_${DateTime.now().millisecondsSinceEpoch}.kml');
+    await file.writeAsString(KmlCsvExport.buildKml(pinnedResults), flush: true);
+    return file;
+  }
+
+  Future<File> exportCsv() async {
+    final dir = workspaceDir ?? await SecureWorkspace.ensureWorkspace();
+    final file = File('${dir.path}/BOUH_EXPORT_${DateTime.now().millisecondsSinceEpoch}.csv');
+    await file.writeAsString(KmlCsvExport.buildCsv(pinnedResults), flush: true);
+    return file;
+  }
+
+  Future<void> shareKml(BuildContext context) async {
+    if (pinnedResults.isEmpty) {
+      Toast.show(context, 'لا توجد نقاط مثبتة للتصدير.');
+      return;
+    }
+    final file = await exportKml();
+    await Share.shareXFiles([XFile(file.path)], text: 'BOUH GOLD PRO ULTRA KML Export');
+  }
+
+  Future<void> shareCsv(BuildContext context) async {
+    if (pinnedResults.isEmpty) {
+      Toast.show(context, 'لا توجد نقاط مثبتة للتصدير.');
+      return;
+    }
+    final file = await exportCsv();
+    await Share.shareXFiles([XFile(file.path)], text: 'BOUH GOLD PRO ULTRA CSV Export');
+  }
+
+  Future<void> shareAppLink() async {
+    await Share.share(
+      '${AppText.appName}\n${AppText.header}\n\nDownload:\n$appLink',
+      subject: AppText.appName,
+    );
+  }
+
+  Future<AIMessageResult> askAi(String input) async {
+    return openAIService.ask(
+      config: aiConfig,
+      userText: input,
+      contextText: buildContextForAi(),
+    );
+  }
+
+  String buildContextForAi() {
+    final last = lastResult;
+    return [
+      AppText.header,
+      AppText.subtitle,
+      'Pinned targets: ${pinnedResults.length}',
+      'Spectral gain: ${spectralGain.toStringAsFixed(3)}',
+      'Magnetic gain: ${magneticGain.toStringAsFixed(3)}',
+      'Slope gain: ${slopeGain.toStringAsFixed(3)}',
+      if (last != null)
+        'Last coordinate: ${last.point.latitude.toStringAsFixed(6)}, ${last.point.longitude.toStringAsFixed(6)}',
+      if (last != null) 'Last Quartz-Gold Index: ${last.quartzGoldText}',
+      'Rule: No economic proof without structure + alteration + field validation + assay + QA/QC.',
+    ].join('\n');
+  }
+
+  List<Marker> get markers {
+    final list = <Marker>[];
+
+    if (gpsPoint != null) {
+      list.add(
+        Marker(
+          point: gpsPoint!,
+          width: 46,
+          height: 46,
+          child: const Icon(Icons.my_location, color: AppColors.cyan, size: 40),
+        ),
+      );
+    }
+
+    if (lastTap != null) {
+      list.add(
+        Marker(
+          point: lastTap!,
+          width: 58,
+          height: 58,
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: AppColors.obsidian.withOpacity(0.78),
+              shape: BoxShape.circle,
+              border: Border.all(color: AppColors.gold, width: 2),
+              boxShadow: [
+                BoxShadow(
+                  color: AppColors.cyan.withOpacity(0.45),
+                  blurRadius: 22,
+                  spreadRadius: 2,
+                ),
+              ],
+            ),
+            child: Icon(
+              lastResult?.veinCoreTriggered == true ? Icons.auto_awesome : Icons.place,
+              color: lastResult?.veinCoreTriggered == true ? AppColors.gold : AppColors.cyan,
+            ),
+          ),
+        ),
+      );
+    }
+
+    for (final r in pinnedResults.take(500)) {
+      list.add(
+        Marker(
+          point: r.point,
+          width: 26,
+          height: 26,
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: r.veinCoreTriggered
+                  ? AppColors.gold.withOpacity(0.22)
+                  : AppColors.cyan.withOpacity(0.12),
+              shape: BoxShape.circle,
+              border: Border.all(
+                color: r.veinCoreTriggered ? AppColors.gold : AppColors.cyan,
+                width: 1.2,
+              ),
+            ),
+            child: Icon(
+              Icons.circle,
+              size: 8,
+              color: r.veinCoreTriggered ? AppColors.gold : AppColors.cyan,
+            ),
+          ),
+        ),
+      );
+    }
+
+    return list;
+  }
+
+  void disposeController() {
+    mapController.dispose();
+  }
+
+  double _asDouble(dynamic v, double fallback) {
+    if (v is num) return v.toDouble();
+    return double.tryParse(v.toString()) ?? fallback;
+  }
+}
+
+class TacticalMap extends StatelessWidget {
+  final AppController controller;
+
+  const TacticalMap({super.key, required this.controller});
+
+  @override
+  Widget build(BuildContext context) {
+    final provider = controller.tileProvider;
+
+    return FlutterMap(
+      mapController: controller.mapController,
+      options: MapOptions(
+        initialCenter: controller.mapCenter,
+        initialZoom: controller.zoom,
+        minZoom: 2,
+        maxZoom: 21,
+        onTap: (_, point) => controller.analyzeTap(context, point),
+        onPositionChanged: (camera, hasGesture) {
+          if (hasGesture) {
+            controller.updateCamera(camera.center, camera.zoom);
+          }
+        },
+      ),
+      children: [
+        if (provider == null)
+          const Center(
+            child: CircularProgressIndicator(color: AppColors.gold),
+          )
+        else
+          ...controller.activeLayers.map(
+            (layer) => TileLayer(
+              urlTemplate: layer.urlTemplate,
+              maxZoom: layer.maxZoom,
+              opacity: layer.opacity,
+              tileProvider: provider,
+              userAgentPackageName: 'com.bouh.gold.pro.ultra',
+              errorTileCallback: (tile, error, stackTrace) {},
+            ),
+          ),
+        if (controller.veinPolyline.isNotEmpty)
+          PolylineLayer(
+            polylines: [
+              Polyline(
+                points: controller.veinPolyline,
+                strokeWidth: 5,
+                color: AppColors.cyan.withOpacity(0.95),
+                borderStrokeWidth: 2,
+                borderColor: AppColors.gold,
+              ),
+            ],
+          ),
+        MarkerLayer(markers: controller.markers),
+      ],
+    );
+  }
+}
+
+class CachedDioTileProvider extends TileProvider {
+  final Dio dio;
+  final Directory cacheDir;
+
+  CachedDioTileProvider({
+    required this.dio,
+    required this.cacheDir,
+    Map<String, String> headers = const {},
+  }) : super(headers: headers);
+
+  static Future<CachedDioTileProvider> create() async {
+    final docs = await getApplicationDocumentsDirectory();
+    final dir = Directory('${docs.path}/${AppText.tileCache}');
+    if (!await dir.exists()) {
+      await dir.create(recursive: true);
+    }
+
+    final cacheOptions = CacheOptions(
+      store: MemCacheStore(),
+      policy: CachePolicy.request,
+      maxStale: const Duration(days: 30),
+      priority: CachePriority.high,
+    );
+
+    final dio = Dio(
+      BaseOptions(
+        connectTimeout: const Duration(seconds: 12),
+        receiveTimeout: const Duration(seconds: 20),
+        sendTimeout: const Duration(seconds: 12),
+        headers: {
+          'User-Agent': 'BOUH-GOLD-PRO-ULTRA-V12.3-ENG-AHMED-ABUAZIZA',
+        },
+      ),
+    );
+
+    dio.interceptors.add(DioCacheInterceptor(options: cacheOptions));
+
+    return CachedDioTileProvider(dio: dio, cacheDir: dir);
+  }
+
+  @override
+  ImageProvider<Object> getImage(TileCoordinates coordinates, TileLayer options) {
+    final url = getTileUrl(coordinates, options);
+    final filename = sha1.convert(utf8.encode(url)).toString();
+    final file = File('${cacheDir.path}/$filename.tile');
+
+    if (file.existsSync() && file.lengthSync() > 0) {
+      final age = DateTime.now().difference(file.lastModifiedSync());
+      if (age <= const Duration(days: 30)) {
+        return FileImage(file);
+      }
+    }
+
+    unawaited(_download(url, file));
+    return NetworkImage(url, headers: headers);
+  }
+
+  Future<void> _download(String url, File target) async {
+    try {
+      if (await target.exists()) {
+        final age = DateTime.now().difference(await target.lastModified());
+        if (age <= const Duration(days: 30) && await target.length() > 0) {
+          return;
+        }
+      }
+
+      final response = await dio.get<List<int>>(
+        url,
+        options: Options(responseType: ResponseType.bytes),
+      );
+
+      final bytes = response.data;
+      if (bytes == null || bytes.isEmpty) return;
+      await target.writeAsBytes(bytes, flush: true);
+    } catch (_) {
+      return;
+    }
+  }
+}
+
+class TileLayerConfig {
+  final String id;
+  final String title;
+  final String subtitle;
+  final String urlTemplate;
+  final bool enabled;
+  final double opacity;
+  final int maxZoom;
+  final bool customProvider;
+
+  const TileLayerConfig({
+    required this.id,
+    required this.title,
+    required this.subtitle,
+    required this.urlTemplate,
+    required this.enabled,
+    required this.opacity,
+    required this.maxZoom,
+    this.customProvider = false,
+  });
+
+  TileLayerConfig copyWith({
+    String? urlTemplate,
+    bool? enabled,
+    double? opacity,
+  }) {
+    return TileLayerConfig(
+      id: id,
+      title: title,
+      subtitle: subtitle,
+      urlTemplate: urlTemplate ?? this.urlTemplate,
+      enabled: enabled ?? this.enabled,
+      opacity: opacity ?? this.opacity,
+      maxZoom: maxZoom,
+      customProvider: customProvider,
+    );
+  }
+}
+
+class GeophysicalProcessor {
+  static const double threshold = 0.850;
+  static const Distance _distance = Distance();
+
+  double spectralGain = 1.0;
+  double magneticGain = 1.0;
+  double slopeGain = 1.0;
+  LatLng calibrationAnchor = const LatLng(19.8255, 36.9532);
+
+  void updateCalibration({
+    required double spectralGain,
+    required double magneticGain,
+    required double slopeGain,
+  }) {
+    this.spectralGain = spectralGain;
+    this.magneticGain = magneticGain;
+    this.slopeGain = slopeGain;
+  }
+
+  GeophysicalResult analyze(LatLng point) {
+    final bands = _syntheticBands(point);
+    final anomaly = _anomaly(point);
+
+    final quartz = bands.quartzGoldIndex * spectralGain;
+    final iron = bands.ironIndex;
+    final alteration = bands.alterationIndex;
+    final slope = anomaly.slopeRisk * slopeGain;
+
+    final triggered = quartz >= threshold;
+
+    return GeophysicalResult(
+      point: point,
+      swir1: bands.swir1,
+      swir2: bands.swir2,
+      red: bands.red,
+      blue: bands.blue,
+      nir: bands.nir,
+      quartzGoldIndex: quartz,
+      ironIndex: iron,
+      alterationIndex: alteration,
+      moistureStress: bands.moistureStress,
+      magneticAnomaly: anomaly.magneticAnomaly,
+      gravityAnomaly: anomaly.gravityAnomaly,
+      slopeRisk: slope,
+      veinCoreTriggered: triggered,
+      decision: triggered
+          ? 'Vein Core Rule active: Quartz-Gold Index crossed 0.850. Inspect quartz vein exposure, gossan cap, and shear contact before sampling.'
+          : 'Follow-up only: spectral value below vein threshold. Do not classify as economic target without structure, alteration, and field validation.',
+      createdAt: DateTime.now().toUtc(),
+    );
+  }
+
+  _Bands _syntheticBands(LatLng p) {
+    final meters = _distance.as(LengthUnit.Meter, p, calibrationAnchor);
+    final anchorBoost = math.max(0.0, 1.0 - meters / 2400.0);
+
+    final structure = math.sin((p.latitude + p.longitude) * 9.73) * 0.027;
+    final latSig = math.sin(p.latitude * 13.71) * 0.038;
+    final lonSig = math.cos(p.longitude * 11.19) * 0.038;
+
+    final swir1 = clampD(0.78 + latSig + structure, 0.42, 1.65);
+    final swir2 = clampD(0.62 + lonSig + anchorBoost * 0.24, 0.32, 1.85);
+    final red = clampD(0.38 + math.sin(p.longitude * 6.31) * 0.055, 0.12, 1.20);
+    final blue = clampD(0.28 + math.cos(p.latitude * 4.92) * 0.045, 0.09, 1.00);
+    final nir = clampD(0.48 + math.sin((p.latitude - p.longitude) * 3.2) * 0.050, 0.18, 1.40);
+
+    return _Bands(swir1: swir1, swir2: swir2, red: red, blue: blue, nir: nir);
+  }
+
+  _Anomaly _anomaly(LatLng p) {
+    final magBase = normalized(
+      math.sin(p.latitude * 5.17) +
+          math.cos(p.longitude * 4.91) +
+          math.sin((p.latitude + p.longitude) * 2.13),
+    );
+
+    final gravBase = normalized(
+      math.cos(p.latitude * 2.74) -
+          math.sin(p.longitude * 3.81) +
+          math.cos((p.latitude - p.longitude) * 1.91),
+    );
+
+    final magnetic = clampD(magBase * magneticGain, 0, 1);
+    final gravity = clampD(gravBase, 0, 1);
+    final azimuth = (math.atan2(
+              math.sin(p.longitude * math.pi / 180.0),
+              math.cos(p.latitude * math.pi / 180.0),
+            ) *
+            180.0 /
+            math.pi)
+        .abs();
+
+    final slope = clampD(magnetic * 0.46 + gravity * 0.34 + (math.sin(p.latitude) * 0.20).abs(), 0, 1);
+
+    return _Anomaly(
+      magneticAnomaly: magnetic,
+      gravityAnomaly: gravity,
+      azimuth: azimuth,
+      slopeRisk: slope,
+    );
+  }
+
+  List<LatLng> buildVeinPolyline(LatLng center) {
+    final anomaly = _anomaly(center);
+    final bearing = anomaly.azimuth * math.pi / 180.0;
+    final points = <LatLng>[];
+
+    for (int i = -6; i <= 6; i++) {
+      final meters = i * 135.0;
+      final dLat = (meters * math.cos(bearing)) / 111320.0;
+      final dLon = (meters * math.sin(bearing)) /
+          (111320.0 * math.cos(center.latitude * math.pi / 180.0));
+      points.add(LatLng(center.latitude + dLat, center.longitude + dLon));
+    }
+
+    return points;
+  }
+
+  LoaderRouteReport checkLoaderRoute({
+    required LatLng start,
+    required LatLng end,
+    required List<List<double>> dem,
+    int samples = 36,
+    double dangerSlopeDegrees = 14.0,
+  }) {
+    final route = <RoutePoint>[];
+    double maxSlope = 0;
+    bool danger = false;
+
+    for (int i = 0; i < samples; i++) {
+      final t = i / (samples - 1);
+      final p = LatLng(
+        lerp(start.latitude, end.latitude, t),
+        lerp(start.longitude, end.longitude, t),
+      );
+      final elevation = sampleDem(dem, t, t);
+
+      double slope = 0;
+      if (route.isNotEmpty) {
+        final prev = route.last;
+        final horizontal = _distance.as(LengthUnit.Meter, prev.point, p).clamp(1.0, double.infinity);
+        slope = math.atan((elevation - prev.elevation).abs() / horizontal) * 180 / math.pi;
+      }
+
+      maxSlope = math.max(maxSlope, slope);
+      if (slope >= dangerSlopeDegrees) danger = true;
+
+      route.add(RoutePoint(
+        point: p,
+        elevation: elevation,
+        slopeDegrees: slope,
+        dangerous: slope >= dangerSlopeDegrees,
+      ));
+    }
+
+    return LoaderRouteReport(
+      route: route,
+      maxSlope: maxSlope,
+      dangerous: danger,
+      message: danger
+          ? 'Danger: loader path contains steep segments. Change route before heavy machinery movement.'
+          : 'Safe preliminary route: no critical slope detected in current DEM matrix.',
+    );
+  }
+
+  ScreeningReport estimateScreening({
+    required double oreTons,
+    required double meshMm,
+    required double quartzGoldIndex,
+    required double ironIndex,
+  }) {
+    final meshFactor = clampD(1.0 / math.sqrt(meshMm.clamp(0.4, 25.0)), 0.15, 1.60);
+    final quartzFactor = clampD(quartzGoldIndex, 0.10, 1.75);
+    final ironPenalty = ironIndex > 1.85 ? 0.82 : 1.0;
+
+    final recovery = clampD((0.38 + meshFactor * 0.22 + quartzFactor * 0.18) * ironPenalty, 0.08, 0.92);
+    final grade = clampD((quartzFactor * 1.35 + meshFactor * 0.42) * ironPenalty, 0.05, 18.0);
+    final grams = oreTons * grade * recovery;
+
+    return ScreeningReport(
+      oreTons: oreTons,
+      meshMm: meshMm,
+      recoveryPercent: recovery * 100.0,
+      gradeGpt: grade,
+      estimatedGoldGrams: grams,
+    );
+  }
+
+  double sampleDem(List<List<double>> dem, double x, double y) {
+    if (dem.isEmpty || dem.first.isEmpty) return 0;
+    final row = (clampD(y, 0, 1) * (dem.length - 1)).floor().clamp(0, dem.length - 1);
+    final col = (clampD(x, 0, 1) * (dem.first.length - 1)).floor().clamp(0, dem.first.length - 1);
+    return dem[row][col];
+  }
+
+  double normalized(double value) => clampD((value + 3.0) / 6.0, 0, 1);
+  double lerp(double a, double b, double t) => a + (b - a) * t;
+}
+
+class _Bands {
+  final double swir1;
+  final double swir2;
+  final double red;
+  final double blue;
+  final double nir;
+
+  const _Bands({
+    required this.swir1,
+    required this.swir2,
+    required this.red,
+    required this.blue,
+    required this.nir,
+  });
+
+  double get quartzGoldIndex => swir1 == 0 ? 0 : swir2 / swir1;
+  double get ironIndex => blue == 0 ? 0 : red / blue;
+  double get alterationIndex => nir == 0 ? 0 : (swir1 + swir2) / nir;
+  double get moistureStress => (nir + swir1) == 0 ? 0 : (nir - swir1) / (nir + swir1);
+}
+
+class _Anomaly {
+  final double magneticAnomaly;
+  final double gravityAnomaly;
+  final double azimuth;
+  final double slopeRisk;
+
+  const _Anomaly({
+    required this.magneticAnomaly,
+    required this.gravityAnomaly,
+    required this.azimuth,
+    required this.slopeRisk,
+  });
+}
+
+class GeophysicalResult {
+  final LatLng point;
+  final double swir1;
+  final double swir2;
+  final double red;
+  final double blue;
+  final double nir;
+  final double quartzGoldIndex;
+  final double ironIndex;
+  final double alterationIndex;
+  final double moistureStress;
+  final double magneticAnomaly;
+  final double gravityAnomaly;
+  final double slopeRisk;
+  final bool veinCoreTriggered;
+  final String decision;
+  final DateTime createdAt;
+
+  const GeophysicalResult({
+    required this.point,
+    required this.swir1,
+    required this.swir2,
+    required this.red,
+    required this.blue,
+    required this.nir,
+    required this.quartzGoldIndex,
+    required this.ironIndex,
+    required this.alterationIndex,
+    required this.moistureStress,
+    required this.magneticAnomaly,
+    required this.gravityAnomaly,
+    required this.slopeRisk,
+    required this.veinCoreTriggered,
+    required this.decision,
+    required this.createdAt,
+  });
+
+  String get quartzGoldText => quartzGoldIndex.toStringAsFixed(3);
+  String get ironText => ironIndex.toStringAsFixed(3);
+  String get alterationText => alterationIndex.toStringAsFixed(3);
+  String get moistureText => moistureStress.toStringAsFixed(3);
+  String get magneticText => magneticAnomaly.toStringAsFixed(3);
+  String get gravityText => gravityAnomaly.toStringAsFixed(3);
+  String get slopeText => slopeRisk.toStringAsFixed(3);
+
+  Map<String, dynamic> toMap() => {
+        'lat': point.latitude,
+        'lon': point.longitude,
+        'swir1': swir1,
+        'swir2': swir2,
+        'red': red,
+        'blue': blue,
+        'nir': nir,
+        'quartzGoldIndex': quartzGoldIndex,
+        'ironIndex': ironIndex,
+        'alterationIndex': alterationIndex,
+        'moistureStress': moistureStress,
+        'magneticAnomaly': magneticAnomaly,
+        'gravityAnomaly': gravityAnomaly,
+        'slopeRisk': slopeRisk,
+        'veinCoreTriggered': veinCoreTriggered,
+        'decision': decision,
+        'createdAt': createdAt.toIso8601String(),
+      };
+
+  factory GeophysicalResult.fromMap(Map<String, dynamic> map) {
+    double d(String key, double fallback) {
+      final value = map[key];
+      if (value is num) return value.toDouble();
+      return double.tryParse(value.toString()) ?? fallback;
+    }
+
+    return GeophysicalResult(
+      point: LatLng(d('lat', 0), d('lon', 0)),
+      swir1: d('swir1', 0),
+      swir2: d('swir2', 0),
+      red: d('red', 0),
+      blue: d('blue', 0),
+      nir: d('nir', 0),
+      quartzGoldIndex: d('quartzGoldIndex', 0),
+      ironIndex: d('ironIndex', 0),
+      alterationIndex: d('alterationIndex', 0),
+      moistureStress: d('moistureStress', 0),
+      magneticAnomaly: d('magneticAnomaly', 0),
+      gravityAnomaly: d('gravityAnomaly', 0),
+      slopeRisk: d('slopeRisk', 0),
+      veinCoreTriggered: map['veinCoreTriggered'] == true,
+      decision: (map['decision'] ?? '').toString(),
+      createdAt: DateTime.tryParse((map['createdAt'] ?? '').toString()) ?? DateTime.now().toUtc(),
+    );
+  }
+}
+
+class RoutePoint {
+  final LatLng point;
+  final double elevation;
+  final double slopeDegrees;
+  final bool dangerous;
+
+  const RoutePoint({
+    required this.point,
+    required this.elevation,
+    required this.slopeDegrees,
+    required this.dangerous,
+  });
+}
+
+class LoaderRouteReport {
+  final List<RoutePoint> route;
+  final double maxSlope;
+  final bool dangerous;
+  final String message;
+
+  const LoaderRouteReport({
+    required this.route,
+    required this.maxSlope,
+    required this.dangerous,
+    required this.message,
+  });
+}
+
+class ScreeningReport {
+  final double oreTons;
+  final double meshMm;
+  final double recoveryPercent;
+  final double gradeGpt;
+  final double estimatedGoldGrams;
+
+  const ScreeningReport({
+    required this.oreTons,
+    required this.meshMm,
+    required this.recoveryPercent,
+    required this.gradeGpt,
+    required this.estimatedGoldGrams,
+  });
+}
+
+class InternalLibraryFile {
+  final String title;
+  final String type;
+  final String description;
+  final LatLng center;
+  final double zoom;
+  final double spectralGain;
+  final double magneticGain;
+  final double slopeGain;
+
+  const InternalLibraryFile({
+    required this.title,
+    required this.type,
+    required this.description,
+    required this.center,
+    required this.zoom,
+    required this.spectralGain,
+    required this.magneticGain,
+    required this.slopeGain,
+  });
+
+  static List<InternalLibraryFile> defaults() => const [
+        InternalLibraryFile(
+          title: 'Red Sea Hills Structure',
+          type: 'Region Calibration',
+          description: 'Structural shear corridors, quartz-vein logic, and magnetic ground control.',
+          center: LatLng(19.8255, 36.9532),
+          zoom: 13.8,
+          spectralGain: 1.08,
+          magneticGain: 1.10,
+          slopeGain: 1.00,
+        ),
+        InternalLibraryFile(
+          title: 'Arbaat Region Pack',
+          type: 'Field Pack',
+          description: 'Arbaat drainage, lineament density, and shallow quartz/gossan follow-up mode.',
+          center: LatLng(19.0460, 37.3238),
+          zoom: 14.6,
+          spectralGain: 1.05,
+          magneticGain: 0.92,
+          slopeGain: 1.06,
+        ),
+        InternalLibraryFile(
+          title: 'Ariab–Wadi Amur Belt',
+          type: 'Metallogenic Belt',
+          description: 'NE–SW shear belt calibration and clay/iron alteration weighting.',
+          center: LatLng(18.7887, 37.4730),
+          zoom: 13.7,
+          spectralGain: 1.12,
+          magneticGain: 1.04,
+          slopeGain: 0.98,
+        ),
+        InternalLibraryFile(
+          title: 'Hashai–Onib Recon',
+          type: 'Reconnaissance Pack',
+          description: 'Recon profile for altered volcanics, gossan caps, and route safety.',
+          center: LatLng(18.7000, 35.9000),
+          zoom: 12.4,
+          spectralGain: 0.98,
+          magneticGain: 1.18,
+          slopeGain: 1.12,
+        ),
+      ];
+}
+
+class SecureWorkspace {
+  static Future<Directory> ensureWorkspace() async {
+    final docs = await getApplicationDocumentsDirectory();
+    final dir = Directory('${docs.path}/${AppText.workspace}');
+    if (!await dir.exists()) {
+      await dir.create(recursive: true);
+    }
+    return dir;
+  }
+
+  static Future<Box> openEncryptedBox(Directory dir) async {
+    Hive.init(dir.path);
+    final key = await _loadOrCreateKey(dir);
+    if (Hive.isBoxOpen(AppText.secureBox)) {
+      return Hive.box(AppText.secureBox);
+    }
+    return Hive.openBox(
+      AppText.secureBox,
+      encryptionCipher: HiveAesCipher(key),
+    );
+  }
+
+  static Future<List<int>> _loadOrCreateKey(Directory dir) async {
+    final file = File('${dir.path}/${AppText.keyFile}');
+    if (await file.exists()) {
+      final raw = await file.readAsString();
+      final decoded = base64Decode(raw);
+      if (decoded.length == 32) return decoded;
+    }
+
+    final random = math.Random.secure();
+    final key = List<int>.generate(32, (_) => random.nextInt(256));
+    await file.writeAsString(base64Encode(key), flush: true);
+    return key;
+  }
+}
+
+class OpenAIService {
+  final Dio dio = Dio(
+    BaseOptions(
+      connectTimeout: const Duration(seconds: 20),
+      receiveTimeout: const Duration(seconds: 45),
+      sendTimeout: const Duration(seconds: 20),
+    ),
+  );
+
+  Future<AIMessageResult> ask({
+    required AIConfig config,
+    required String userText,
+    required String contextText,
+  }) async {
+    final local = LocalNlp.parse(userText);
+
+    if (!config.canUseOnline) {
+      return local;
+    }
+
+    try {
+      final response = await dio.post(
+        config.endpoint,
+        options: Options(
+          headers: {
+            'Authorization': 'Bearer ${config.apiKey}',
+            'Content-Type': 'application/json',
+          },
+        ),
+        data: {
+          'model': config.model,
+          'temperature': 0.2,
+          'messages': [
+            {
+              'role': 'system',
+              'content':
+                  'You are BOUH GOLD PRO ULTRA field AI. Answer clearly in Arabic or bilingual Arabic/English. Never claim economic discovery without field validation, assay, and QA/QC.',
+            },
+            {
+              'role': 'user',
+              'content': 'Project context:\n$contextText\n\nUser command:\n$userText',
+            },
+          ],
+        },
+      );
+
+      final data = response.data;
+      final choices = data is Map ? data['choices'] : null;
+      final answer = choices is List && choices.isNotEmpty
+          ? choices.first['message']?['content']?.toString()
+          : null;
+
+      return AIMessageResult(
+        text: answer?.trim().isNotEmpty == true
+            ? answer!.trim()
+            : 'تم الاتصال بالذكاء عبر الإنترنت، لكن لم تصل إجابة واضحة.',
+        online: true,
+        commandType: local.commandType,
+      );
+    } catch (e) {
+      return AIMessageResult(
+        text:
+            'تعذر الاتصال بالذكاء عبر الإنترنت. تم تشغيل المساعد المحلي.\n\nسبب الخطأ: $e\n\n${local.text}',
+        online: false,
+        commandType: local.commandType,
+      );
+    }
+  }
+}
+
+class AIConfig {
+  final bool online;
+  final String endpoint;
+  final String apiKey;
+  final String model;
+
+  const AIConfig({
+    required this.online,
+    required this.endpoint,
+    required this.apiKey,
+    required this.model,
+  });
+
+  bool get canUseOnline =>
+      online && endpoint.trim().isNotEmpty && apiKey.trim().isNotEmpty && model.trim().isNotEmpty;
+
+  AIConfig copyWith({
+    bool? online,
+    String? endpoint,
+    String? apiKey,
+    String? model,
+  }) {
+    return AIConfig(
+      online: online ?? this.online,
+      endpoint: endpoint ?? this.endpoint,
+      apiKey: apiKey ?? this.apiKey,
+      model: model ?? this.model,
+    );
+  }
+
+  Map<String, dynamic> toMap() => {
+        'online': online,
+        'endpoint': endpoint,
+        'apiKey': apiKey,
+        'model': model,
+      };
+}
+
+class AIMessageResult {
+  final String text;
+  final bool online;
+  final String commandType;
+
+  const AIMessageResult({
+    required this.text,
+    required this.online,
+    required this.commandType,
+  });
+}
+
+class LocalNlp {
+  static AIMessageResult parse(String input) {
+    final text = input.trim();
+    final lower = text.toLowerCase();
+    final coordinate = _extractCoordinate(text);
+
+    if (coordinate != null &&
+        (lower.contains('حلل') ||
+            lower.contains('افحص') ||
+            lower.contains('analyze') ||
+            lower.contains('target') ||
+            lower.contains('نقطة'))) {
+      return AIMessageResult(
+        text:
+            'أمر محلي مفهوم: تحليل نقطة.\nالإحداثية: ${coordinate.latitude.toStringAsFixed(6)}, ${coordinate.longitude.toStringAsFixed(6)}\nاضغط على نفس الموقع في الخريطة لتشغيل مؤشر الكوارتز/الذهب والشذوذ المغناطيسي والانحدار.',
+        online: false,
+        commandType: 'coordinate_analysis',
+      );
+    }
+
+    if (lower.contains('gpz') || lower.contains('7000') || lower.contains('جهاز') || lower.contains('حساسية')) {
+      return const AIMessageResult(
+        text:
+            'إرشاد GPZ 7000:\n- أرض مغناطيسية أو بازلتية: Difficult/Severe، وضع High Yield، الحساسية 8–11، الحركة بطيئة.\n- أرض هادئة مع كوارتز واضح: Normal، وضع General/Deep، الحساسية 12–16، تقليل تنعيم الصوت.',
+        online: false,
+        commandType: 'gpz',
+      );
+    }
+
+    if (lower.contains('بنية') || lower.contains('structure') || lower.contains('reject') || lower.contains('رفض')) {
+      return const AIMessageResult(
+        text:
+            'قاعدة البنية: بدون بنية واضحة مثل فالق، قص، تقاطع عروق، أو ممر تمدد، لا يتم رفع النقطة. اللون أو الحديد وحده لا يكفي.',
+        online: false,
+        commandType: 'structure_rule',
+      );
+    }
+
+    if (lower.contains('تصدير') || lower.contains('export') || lower.contains('kml') || lower.contains('csv')) {
+      return const AIMessageResult(
+        text:
+            'للتصدير: استخدم زر التصدير في الشريط السفلي ثم اختر KML أو CSV. سيتم فتح نافذة المشاركة في أندرويد تلقائيًا.',
+        online: false,
+        commandType: 'export',
+      );
+    }
+
+    return const AIMessageResult(
+      text:
+          'المساعد المحلي جاهز. أمثلة أوامر:\n- حلل 19.8255, 36.9532\n- افحص GPZ 7000\n- ما معنى بنية؟\n- صدّر KML\nلإجابة أوسع فعّل OpenAI من الإعدادات.',
+      online: false,
+      commandType: 'general',
+    );
+  }
+
+  static LatLng? _extractCoordinate(String input) {
+    final regex = RegExp(r'(-?\d{1,2}(?:\.\d+)?)\s*[,،\s]\s*(-?\d{1,3}(?:\.\d+)?)');
+    final match = regex.firstMatch(input);
+    if (match == null) return null;
+
+    final lat = double.tryParse(match.group(1) ?? '');
+    final lon = double.tryParse(match.group(2) ?? '');
+
+    if (lat == null || lon == null) return null;
+    if (lat < -90 || lat > 90 || lon < -180 || lon > 180) return null;
+
+    return LatLng(lat, lon);
+  }
+}
+
+class KmlCsvExport {
+  static String buildKml(List<GeophysicalResult> pins) {
+    final b = StringBuffer();
+    b.writeln('<?xml version="1.0" encoding="UTF-8"?>');
+    b.writeln('<kml xmlns="http://www.opengis.net/kml/2.2">');
+    b.writeln('<Document>');
+    b.writeln('<name>${_xml(AppText.appName)}</name>');
+    b.writeln('<description>${_xml(AppText.header)}</description>');
+    b.writeln('''
+<Style id="bouhGoldPin">
+  <IconStyle>
+    <color>ff37afd4</color>
+    <scale>1.15</scale>
+    <Icon>
+      <href>http://maps.google.com/mapfiles/kml/shapes/target.png</href>
+    </Icon>
+  </IconStyle>
+</Style>
+''');
+
+    for (final r in pins) {
+      b.writeln('<Placemark>');
+      b.writeln('<name>${_xml(r.veinCoreTriggered ? 'Quartz-Gold Signal' : 'Pinned Field Point')}</name>');
+      b.writeln('<styleUrl>#bouhGoldPin</styleUrl>');
+      b.writeln('<description><![CDATA[');
+      b.writeln('<b>Quartz-Gold Index:</b> ${r.quartzGoldText}<br/>');
+      b.writeln('<b>Iron Index:</b> ${r.ironText}<br/>');
+      b.writeln('<b>Alteration:</b> ${r.alterationText}<br/>');
+      b.writeln('<b>Moisture Stress:</b> ${r.moistureText}<br/>');
+      b.writeln('<b>Magnetic:</b> ${r.magneticText}<br/>');
+      b.writeln('<b>Gravity:</b> ${r.gravityText}<br/>');
+      b.writeln('<b>Slope:</b> ${r.slopeText}<br/>');
+      b.writeln('<b>Decision:</b> ${r.decision}<br/>');
+      b.writeln(']]></description>');
+      b.writeln('<Point><coordinates>${r.point.longitude},${r.point.latitude},0</coordinates></Point>');
+      b.writeln('</Placemark>');
+    }
+
+    b.writeln('</Document>');
+    b.writeln('</kml>');
+    return b.toString();
+  }
+
+  static String buildCsv(List<GeophysicalResult> pins) {
+    final b = StringBuffer();
+    b.writeln(
+      'latitude,longitude,quartz_gold_index,iron_index,alteration,moisture_stress,magnetic,gravity,slope,vein_core_triggered,decision',
+    );
+
+    for (final r in pins) {
+      b.writeln([
+        r.point.latitude.toStringAsFixed(8),
+        r.point.longitude.toStringAsFixed(8),
+        r.quartzGoldText,
+        r.ironText,
+        r.alterationText,
+        r.moistureText,
+        r.magneticText,
+        r.gravityText,
+        r.slopeText,
+        r.veinCoreTriggered.toString(),
+        _csv(r.decision),
+      ].join(','));
+    }
+
+    return b.toString();
+  }
+
+  static String _xml(String input) {
+    return input
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&apos;');
+  }
+
+  static String _csv(String input) => '"${input.replaceAll('"', '""')}"';
+}
+
+class GeophysicalOverlayPainter extends CustomPainter {
+  final LatLng center;
+  final GeophysicalResult? lastResult;
+  final int tick;
+
+  GeophysicalOverlayPainter({
+    required this.center,
+    required this.lastResult,
+    required this.tick,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final magnetic = lastResult?.magneticAnomaly ?? ((math.sin(center.latitude) + 1) / 2);
+    final gravity = lastResult?.gravityAnomaly ?? ((math.cos(center.longitude) + 1) / 2);
+
+    final magPaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.25
+      ..color = AppColors.cyan.withOpacity(0.07 + magnetic * 0.20);
+
+    final gravPaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.1
+      ..color = AppColors.gold.withOpacity(0.06 + gravity * 0.17);
+
+    for (int i = 0; i < 10; i++) {
+      final y = size.height * (i / 9);
+      final path = Path()..moveTo(0, y);
+      for (double x = 0; x <= size.width; x += 24) {
+        final wave = math.sin((x / 95.0) + i + magnetic * 4 + tick * 0.01) * 14;
+        path.lineTo(x, y + wave);
+      }
+      canvas.drawPath(path, magPaint);
+    }
+
+    for (int i = 0; i < 7; i++) {
+      final x = size.width * (i / 6);
+      final path = Path()..moveTo(x, 0);
+      for (double y = 0; y <= size.height; y += 24) {
+        final wave = math.cos((y / 110.0) + i + gravity * 5 + tick * 0.01) * 18;
+        path.lineTo(x + wave, y);
+      }
+      canvas.drawPath(path, gravPaint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant GeophysicalOverlayPainter oldDelegate) {
+    return oldDelegate.tick != tick || oldDelegate.lastResult != lastResult;
+  }
+}
+
+class CredentialsHeader extends StatelessWidget {
+  final AppController controller;
+  final VoidCallback onLayers;
+  final VoidCallback onLibrary;
+  final VoidCallback onAi;
+  final VoidCallback onSettings;
+
+  const CredentialsHeader({
+    super.key,
+    required this.controller,
+    required this.onLayers,
+    required this.onLibrary,
+    required this.onAi,
+    required this.onSettings,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(24),
+      child: BackdropFilter(
+        filter: ui.ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+        child: TacticalPanel(
+          padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
+          opacity: 0.82,
+          child: Column(
+            children: [
+              const Text(
+                AppText.header,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: AppColors.gold,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 0.3,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                AppText.subtitle,
+                textAlign: TextAlign.center,
+                style: TextStyle(color: AppColors.white.withOpacity(0.72), fontSize: 12),
+              ),
+              const SizedBox(height: 9),
+              Row(
+                children: [
+                  Expanded(child: MiniButton(label: 'Layers', icon: Icons.layers, onTap: onLayers)),
+                  const SizedBox(width: 6),
+                  Expanded(child: MiniButton(label: 'Library', icon: Icons.folder, onTap: onLibrary)),
+                  const SizedBox(width: 6),
+                  Expanded(child: MiniButton(label: 'AI', icon: Icons.terminal, onTap: onAi)),
+                  const SizedBox(width: 6),
+                  Expanded(child: MiniButton(label: 'Settings', icon: Icons.tune, onTap: onSettings)),
+                ],
+              ),
+              if (controller.lastResult != null) ...[
+                const SizedBox(height: 7),
+                Text(
+                  'QG ${controller.lastResult!.quartzGoldText} | Fe ${controller.lastResult!.ironText} | Slope ${controller.lastResult!.slopeText}',
+                  style: const TextStyle(color: AppColors.cyan, fontSize: 12, fontWeight: FontWeight.bold),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class TacticalBottomBar extends StatelessWidget {
+  final VoidCallback onGps;
+  final VoidCallback onRoute;
+  final VoidCallback onPlant;
+  final VoidCallback onExport;
+  final VoidCallback onShare;
+
+  const TacticalBottomBar({
+    super.key,
+    required this.onGps,
+    required this.onRoute,
+    required this.onPlant,
+    required this.onExport,
+    required this.onShare,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return TacticalPanel(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+      opacity: 0.92,
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceAround,
+        children: [
+          CommandButton(label: 'GPS', icon: Icons.my_location, onTap: onGps),
+          CommandButton(label: 'Route', icon: Icons.route, onTap: onRoute),
+          CommandButton(label: 'Plant', icon: Icons.factory, onTap: onPlant),
+          CommandButton(label: 'Export', icon: Icons.ios_share, onTap: onExport),
+          CommandButton(label: 'App', icon: Icons.share, onTap: onShare),
+        ],
+      ),
+    );
+  }
+}
+
+class Panels {
+  static void showAnalysis(BuildContext context, GeophysicalResult result) {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: AppColors.obsidian,
+      isScrollControlled: true,
+      builder: (_) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: TacticalPanel(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    result.veinCoreTriggered ? Icons.auto_awesome : Icons.info_outline,
+                    size: 46,
+                    color: result.veinCoreTriggered ? AppColors.gold : AppColors.cyan,
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    result.veinCoreTriggered ? 'Vein Core Rule Active' : 'Field Follow-up Point',
+                    style: TextStyle(
+                      color: result.veinCoreTriggered ? AppColors.gold : AppColors.cyan,
+                      fontSize: 22,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  Text(
+                    '${result.point.latitude.toStringAsFixed(6)}, ${result.point.longitude.toStringAsFixed(6)}',
+                    style: TextStyle(color: Colors.white.withOpacity(0.65)),
+                  ),
+                  const SizedBox(height: 14),
+                  MetricGrid(result: result),
+                  const SizedBox(height: 12),
+                  InfoBox(
+                    title: 'Decision',
+                    text: result.decision,
+                    color: result.veinCoreTriggered ? AppColors.gold : AppColors.cyan,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  static void showLayerManager(BuildContext context, AppController controller) {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: AppColors.obsidian,
+      isScrollControlled: true,
+      builder: (_) => AnimatedBuilder(
+        animation: controller,
+        builder: (context, _) {
+          return Directionality(
+            textDirection: TextDirection.rtl,
+            child: SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: TacticalPanel(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const PanelTitle(icon: Icons.layers, title: 'Live Map Layer Manager'),
+                      const SizedBox(height: 8),
+                      Text(
+                        'PlanetScope and Maxar require URL/token from Advanced Settings.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: Colors.white.withOpacity(0.65)),
+                      ),
+                      const SizedBox(height: 10),
+                      ConstrainedBox(
+                        constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.58),
+                        child: ListView.builder(
+                          shrinkWrap: true,
+                          itemCount: controller.layers.length,
+                          itemBuilder: (_, i) {
+                            final raw = controller.layers[i];
+                            final resolved = controller.resolveLayer(raw);
+                            final locked = raw.customProvider && resolved.urlTemplate.trim().isEmpty;
+
+                            return Container(
+                              margin: const EdgeInsets.only(bottom: 10),
+                              padding: const EdgeInsets.all(12),
+                              decoration: TacticalPanel.decoration(0.80),
+                              child: Column(
+                                children: [
+                                  SwitchListTile(
+                                    activeColor: AppColors.gold,
+                                    value: raw.enabled,
+                                    title: Text(raw.title, style: const TextStyle(color: Colors.white)),
+                                    subtitle: Text(
+                                      locked ? '${raw.subtitle} — secure URL required' : raw.subtitle,
+                                      style: TextStyle(color: locked ? AppColors.amber : Colors.white54),
+                                    ),
+                                    onChanged: locked ? null : (v) => controller.setLayerEnabled(raw.id, v),
+                                  ),
+                                  Row(
+                                    children: [
+                                      const Text('Opacity', style: TextStyle(color: Colors.white70)),
+                                      Expanded(
+                                        child: Slider(
+                                          value: raw.opacity,
+                                          min: 0.25,
+                                          max: 1.0,
+                                          divisions: 15,
+                                          activeColor: AppColors.cyan,
+                                          inactiveColor: Colors.white12,
+                                          onChanged: (v) => controller.setLayerOpacity(raw.id, v),
+                                        ),
+                                      ),
+                                      Text(raw.opacity.toStringAsFixed(2), style: const TextStyle(color: AppColors.gold)),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  static void showLibrary(BuildContext context, AppController controller) {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: AppColors.obsidian,
+      isScrollControlled: true,
+      builder: (_) => AnimatedBuilder(
+        animation: controller,
+        builder: (context, _) {
+          return Directionality(
+            textDirection: TextDirection.rtl,
+            child: SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: TacticalPanel(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const PanelTitle(icon: Icons.folder_open, title: 'Internal Library Dashboard'),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Click a package to calibrate spectral, magnetic, slope and viewport parameters.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: Colors.white.withOpacity(0.65)),
+                      ),
+                      const SizedBox(height: 12),
+                      ConstrainedBox(
+                        constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.58),
+                        child: ListView.builder(
+                          shrinkWrap: true,
+                          itemCount: controller.library.length,
+                          itemBuilder: (_, i) {
+                            final f = controller.library[i];
+                            return InkWell(
+                              onTap: () => controller.calibrateWith(f, context),
+                              borderRadius: BorderRadius.circular(18),
+                              child: Container(
+                                margin: const EdgeInsets.only(bottom: 10),
+                                padding: const EdgeInsets.all(14),
+                                decoration: TacticalPanel.decoration(0.82),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(f.title, style: const TextStyle(color: AppColors.gold, fontSize: 17, fontWeight: FontWeight.bold)),
+                                    const SizedBox(height: 4),
+                                    Text(f.type, style: const TextStyle(color: AppColors.cyan)),
+                                    const SizedBox(height: 6),
+                                    Text(f.description, style: TextStyle(color: Colors.white.withOpacity(0.70), height: 1.4)),
+                                    const SizedBox(height: 6),
+                                    Text(
+                                      'Spectral ${f.spectralGain.toStringAsFixed(3)} | Magnetic ${f.magneticGain.toStringAsFixed(3)} | Slope ${f.slopeGain.toStringAsFixed(3)}',
+                                      style: const TextStyle(color: Colors.white60, fontSize: 12),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  static void showTerminal(BuildContext context, AppController controller) {
+    final input = TextEditingController();
+    final output = ValueNotifier<String>(
+      'Terminal Ready.\nType: حلل 19.8255, 36.9532\nOr: GPZ 7000\nOr: بنية',
+    );
+    final busy = ValueNotifier<bool>(false);
+
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: AppColors.obsidian,
+      isScrollControlled: true,
+      builder: (_) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: SafeArea(
+          child: Padding(
+            padding: EdgeInsets.only(
+              left: 16,
+              right: 16,
+              top: 16,
+              bottom: MediaQuery.of(context).viewInsets.bottom + 16,
+            ),
+            child: TacticalPanel(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const PanelTitle(icon: Icons.terminal, title: 'Online / Offline Command Terminal'),
+                  const SizedBox(height: 12),
+                  ValueListenableBuilder<String>(
+                    valueListenable: output,
+                    builder: (_, text, __) => Container(
+                      width: double.infinity,
+                      constraints: const BoxConstraints(minHeight: 120, maxHeight: 250),
+                      padding: const EdgeInsets.all(14),
+                      decoration: TacticalPanel.decoration(0.72),
+                      child: SingleChildScrollView(
+                        child: Text(text, style: const TextStyle(color: Colors.white, height: 1.45)),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TacticalInput(controller: input, label: 'Command', maxLines: 2),
+                  const SizedBox(height: 12),
+                  ValueListenableBuilder<bool>(
+                    valueListenable: busy,
+                    builder: (_, isBusy, __) => GoldButton(
+                      label: isBusy ? 'Processing...' : 'Execute Command',
+                      icon: Icons.send,
+                      onTap: isBusy
+                          ? () {}
+                          : () async {
+                              busy.value = true;
+                              final res = await controller.askAi(input.text);
+                              output.value = '${res.online ? 'ONLINE AI' : 'LOCAL NLP'} | ${res.commandType}\n\n${res.text}';
+                              busy.value = false;
+                            },
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  static void showSettings(BuildContext context, AppController controller) {
+    final planetUrl = TextEditingController(text: controller.planetTemplate);
+    final planetToken = TextEditingController(text: controller.planetToken);
+    final maxarUrl = TextEditingController(text: controller.maxarTemplate);
+    final maxarToken = TextEditingController(text: controller.maxarToken);
+    final endpoint = TextEditingController(text: controller.aiConfig.endpoint);
+    final apiKey = TextEditingController(text: controller.aiConfig.apiKey);
+    final model = TextEditingController(text: controller.aiConfig.model);
+    final appLink = TextEditingController(text: controller.appLink);
+    bool online = controller.aiConfig.online;
+
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: AppColors.obsidian,
+      isScrollControlled: true,
+      builder: (_) => StatefulBuilder(
+        builder: (context, setLocal) {
+          return Directionality(
+            textDirection: TextDirection.rtl,
+            child: SafeArea(
+              child: Padding(
+                padding: EdgeInsets.only(
+                  left: 16,
+                  right: 16,
+                  top: 16,
+                  bottom: MediaQuery.of(context).viewInsets.bottom + 16,
+                ),
+                child: TacticalPanel(
+                  child: SingleChildScrollView(
+                    child: Column(
+                      children: [
+                        const PanelTitle(icon: Icons.tune, title: 'Advanced Settings Panel'),
+                        const SizedBox(height: 12),
+                        SwitchListTile(
+                          value: online,
+                          activeColor: AppColors.gold,
+                          title: const Text('Enable Online AI', style: TextStyle(color: Colors.white)),
+                          subtitle: const Text('Fallback parser remains active offline', style: TextStyle(color: Colors.white54)),
+                          onChanged: (v) => setLocal(() => online = v),
+                        ),
+                        TacticalInput(controller: endpoint, label: 'OpenAI Endpoint'),
+                        const SizedBox(height: 8),
+                        TacticalInput(controller: apiKey, label: 'OpenAI Bearer Token', obscure: true),
+                        const SizedBox(height: 8),
+                        TacticalInput(controller: model, label: 'Model'),
+                        const Divider(color: Colors.white24, height: 28),
+                        TacticalInput(controller: planetUrl, label: 'PlanetScope XYZ/WMTS URL Template'),
+                        const SizedBox(height: 8),
+                        TacticalInput(controller: planetToken, label: 'PlanetScope Token', obscure: true),
+                        const SizedBox(height: 8),
+                        TacticalInput(controller: maxarUrl, label: 'Maxar XYZ/WMTS URL Template'),
+                        const SizedBox(height: 8),
+                        TacticalInput(controller: maxarToken, label: 'Maxar Token', obscure: true),
+                        const SizedBox(height: 8),
+                        TacticalInput(controller: appLink, label: 'App Download Link'),
+                        const SizedBox(height: 14),
+                        GoldButton(
+                          label: 'Save & Refresh Live Engine',
+                          icon: Icons.save,
+                          onTap: () async {
+                            controller.planetTemplate = planetUrl.text.trim();
+                            controller.planetToken = planetToken.text.trim();
+                            controller.maxarTemplate = maxarUrl.text.trim();
+                            controller.maxarToken = maxarToken.text.trim();
+                            controller.appLink = appLink.text.trim().isEmpty ? AppText.appDownloadLink : appLink.text.trim();
+                            controller.aiConfig = AIConfig(
+                              online: online,
+                              endpoint: endpoint.text.trim().isEmpty ? AppText.openAiEndpoint : endpoint.text.trim(),
+                              apiKey: apiKey.text.trim(),
+                              model: model.text.trim().isEmpty ? 'gpt-4o' : model.text.trim(),
+                            );
+                            await controller.saveState();
+                            controller.notifyListeners();
+                            if (context.mounted) Toast.show(context, 'Settings saved and map engine refreshed.');
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  static void showLoaderRoute(BuildContext context, AppController controller) {
+    final startLat = TextEditingController(text: (controller.lastTap ?? controller.mapCenter).latitude.toStringAsFixed(6));
+    final startLon = TextEditingController(text: (controller.lastTap ?? controller.mapCenter).longitude.toStringAsFixed(6));
+    final endLat = TextEditingController(text: (controller.gpsPoint ?? controller.mapCenter).latitude.toStringAsFixed(6));
+    final endLon = TextEditingController(text: (controller.gpsPoint ?? controller.mapCenter).longitude.toStringAsFixed(6));
+    final result = ValueNotifier<String>('Enter excavation and plant coordinates, then run route check.');
+
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: AppColors.obsidian,
+      isScrollControlled: true,
+      builder: (_) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: SafeArea(
+          child: Padding(
+            padding: EdgeInsets.only(
+              left: 16,
+              right: 16,
+              top: 16,
+              bottom: MediaQuery.of(context).viewInsets.bottom + 16,
+            ),
+            child: TacticalPanel(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const PanelTitle(icon: Icons.route, title: 'Loader Safe Route Rule'),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      Expanded(child: TacticalInput(controller: startLat, label: 'Start Lat')),
+                      const SizedBox(width: 8),
+                      Expanded(child: TacticalInput(controller: startLon, label: 'Start Lon')),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(child: TacticalInput(controller: endLat, label: 'End Lat')),
+                      const SizedBox(width: 8),
+                      Expanded(child: TacticalInput(controller: endLon, label: 'End Lon')),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  GoldButton(
+                    label: 'Run DEM Danger Check',
+                    icon: Icons.warning_amber,
+                    onTap: () {
+                      final sLat = double.tryParse(startLat.text);
+                      final sLon = double.tryParse(startLon.text);
+                      final eLat = double.tryParse(endLat.text);
+                      final eLon = double.tryParse(endLon.text);
+                      if (sLat == null || sLon == null || eLat == null || eLon == null) {
+                        result.value = 'Invalid coordinate input.';
+                        return;
+                      }
+
+                      final report = controller.processor.checkLoaderRoute(
+                        start: LatLng(sLat, sLon),
+                        end: LatLng(eLat, eLon),
+                        dem: StandardDem.matrix(),
+                      );
+
+                      result.value =
+                          '${report.message}\n\nMax slope: ${report.maxSlope.toStringAsFixed(3)}°\nRoute points: ${report.route.length}';
+                    },
+                  ),
+                  const SizedBox(height: 10),
+                  ValueListenableBuilder<String>(
+                    valueListenable: result,
+                    builder: (_, text, __) => InfoBox(title: 'Route Report', text: text, color: AppColors.cyan),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  static void showScreeningPlant(BuildContext context, AppController controller) {
+    final tons = TextEditingController(text: '10');
+    final mesh = TextEditingController(text: '2.0');
+    final result = ValueNotifier<String>('Enter ore volume and mesh size to estimate field telemetry.');
+
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: AppColors.obsidian,
+      isScrollControlled: true,
+      builder: (_) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: SafeArea(
+          child: Padding(
+            padding: EdgeInsets.only(
+              left: 16,
+              right: 16,
+              top: 16,
+              bottom: MediaQuery.of(context).viewInsets.bottom + 16,
+            ),
+            child: TacticalPanel(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const PanelTitle(icon: Icons.factory, title: 'Screening Plant Telemetry Rule'),
+                  const SizedBox(height: 10),
+                  TacticalInput(controller: tons, label: 'Ore Volume / Tons'),
+                  const SizedBox(height: 8),
+                  TacticalInput(controller: mesh, label: 'Mesh Size / mm'),
+                  const SizedBox(height: 10),
+                  GoldButton(
+                    label: 'Estimate Production Metrics',
+                    icon: Icons.calculate,
+                    onTap: () {
+                      final ore = double.tryParse(tons.text);
+                      final meshMm = double.tryParse(mesh.text);
+                      if (ore == null || meshMm == null) {
+                        result.value = 'Invalid ore or mesh input.';
+                        return;
+                      }
+                      final last = controller.lastResult;
+                      final report = controller.processor.estimateScreening(
+                        oreTons: ore,
+                        meshMm: meshMm,
+                        quartzGoldIndex: last?.quartzGoldIndex ?? 0.650,
+                        ironIndex: last?.ironIndex ?? 1.200,
+                      );
+                      result.value =
+                          'Ore: ${report.oreTons.toStringAsFixed(3)} tons\nMesh: ${report.meshMm.toStringAsFixed(3)} mm\nRecovery: ${report.recoveryPercent.toStringAsFixed(3)}%\nGrade: ${report.gradeGpt.toStringAsFixed(3)} g/t\nEstimated gold: ${report.estimatedGoldGrams.toStringAsFixed(3)} g\n\nOperational estimate only. Not economic proof.';
+                    },
+                  ),
+                  const SizedBox(height: 10),
+                  ValueListenableBuilder<String>(
+                    valueListenable: result,
+                    builder: (_, text, __) => InfoBox(title: 'Plant Report', text: text, color: AppColors.gold),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  static void showExport(BuildContext context, AppController controller) {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: AppColors.obsidian,
+      builder: (_) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: TacticalPanel(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const PanelTitle(icon: Icons.ios_share, title: 'Sovereign Export & Sharing'),
+                  const SizedBox(height: 14),
+                  GoldButton(
+                    label: 'Generate & Share KML',
+                    icon: Icons.public,
+                    onTap: () => controller.shareKml(context),
+                  ),
+                  const SizedBox(height: 10),
+                  GoldButton(
+                    label: 'Generate & Share CSV',
+                    icon: Icons.table_chart,
+                    onTap: () => controller.shareCsv(context),
+                  ),
+                  const SizedBox(height: 10),
+                  GoldButton(
+                    label: 'Share App Download Link',
+                    icon: Icons.share,
+                    onTap: controller.shareAppLink,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class MetricGrid extends StatelessWidget {
+  final GeophysicalResult result;
+
+  const MetricGrid({super.key, required this.result});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        Row(
+          children: [
+            Expanded(child: MetricBox(title: 'Quartz-Gold Index', subtitle: 'SWIR2 / SWIR1', value: result.quartzGoldText)),
+            const SizedBox(width: 8),
+            Expanded(child: MetricBox(title: 'Iron Index', subtitle: 'Red / Blue', value: result.ironText)),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(child: MetricBox(title: 'Alteration', subtitle: 'SWIR / NIR', value: result.alterationText)),
+            const SizedBox(width: 8),
+            Expanded(child: MetricBox(title: 'Slope', subtitle: 'DEM risk', value: result.slopeText)),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class TacticalPanel extends StatelessWidget {
+  final Widget child;
+  final EdgeInsetsGeometry padding;
+  final double opacity;
+
+  const TacticalPanel({
+    super.key,
+    required this.child,
+    this.padding = const EdgeInsets.all(14),
+    this.opacity = 0.92,
+  });
+
+  static BoxDecoration decoration(double opacity) {
+    return BoxDecoration(
+      color: AppColors.matteTeal.withOpacity(opacity),
+      borderRadius: BorderRadius.circular(22),
+      border: Border.all(color: AppColors.gold.withOpacity(0.42), width: 1.1),
+      boxShadow: [
+        BoxShadow(
+          color: Colors.black.withOpacity(0.42),
+          blurRadius: 22,
+          offset: const Offset(0, 8),
+        ),
+      ],
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: padding,
+      decoration: decoration(opacity),
+      child: child,
+    );
+  }
+}
+
+class MiniButton extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final VoidCallback onTap;
+
+  const MiniButton({
+    super.key,
+    required this.label,
+    required this.icon,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(14),
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 9),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: AppColors.cyan.withOpacity(0.42)),
+          color: AppColors.cyan.withOpacity(0.08),
+        ),
+        child: Column(
+          children: [
+            Icon(icon, color: AppColors.cyan, size: 18),
+            const SizedBox(height: 3),
+            Text(label, style: const TextStyle(color: Colors.white, fontSize: 10.5)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class CommandButton extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final VoidCallback onTap;
+
+  const CommandButton({
+    super.key,
+    required this.label,
+    required this.icon,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(14),
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, color: AppColors.gold, size: 23),
+            const SizedBox(height: 3),
+            Text(label, style: const TextStyle(color: Colors.white, fontSize: 10.5)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class GoldButton extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final VoidCallback onTap;
+
+  const GoldButton({
+    super.key,
+    required this.label,
+    required this.icon,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return ElevatedButton.icon(
+      onPressed: onTap,
+      icon: Icon(icon),
+      label: Text(label),
+      style: ElevatedButton.styleFrom(
+        backgroundColor: AppColors.gold,
+        foregroundColor: Colors.black,
+        minimumSize: const Size.fromHeight(48),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        textStyle: const TextStyle(fontWeight: FontWeight.bold),
+      ),
+    );
+  }
+}
+
+class MetricBox extends StatelessWidget {
+  final String title;
+  final String subtitle;
+  final String value;
+
+  const MetricBox({
+    super.key,
+    required this.title,
+    required this.subtitle,
+    required this.value,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: TacticalPanel.decoration(0.78),
+      child: Column(
+        children: [
+          Text(title, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white, fontSize: 12)),
+          const SizedBox(height: 3),
+          Text(subtitle, style: TextStyle(color: Colors.white.withOpacity(0.45), fontSize: 10)),
+          const SizedBox(height: 7),
+          Text(value, style: const TextStyle(color: AppColors.gold, fontSize: 22, fontWeight: FontWeight.bold)),
+        ],
+      ),
+    );
+  }
+}
+
+class InfoBox extends StatelessWidget {
+  final String title;
+  final String text;
+  final Color color;
+
+  const InfoBox({
+    super.key,
+    required this.title,
+    required this.text,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: TacticalPanel.decoration(0.78),
+      child: Column(
+        children: [
+          Text(title, style: TextStyle(color: color, fontSize: 16, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 8),
+          Text(text, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white, height: 1.5)),
+        ],
+      ),
+    );
+  }
+}
+
+class PanelTitle extends StatelessWidget {
+  final IconData icon;
+  final String title;
+
+  const PanelTitle({
+    super.key,
+    required this.icon,
+    required this.title,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Icon(icon, color: AppColors.gold),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            title,
+            style: const TextStyle(color: AppColors.gold, fontSize: 19, fontWeight: FontWeight.bold),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class TacticalInput extends StatelessWidget {
+  final TextEditingController controller;
+  final String label;
+  final int maxLines;
+  final bool obscure;
+
+  const TacticalInput({
+    super.key,
+    required this.controller,
+    required this.label,
+    this.maxLines = 1,
+    this.obscure = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return TextField(
+      controller: controller,
+      maxLines: obscure ? 1 : maxLines,
+      obscureText: obscure,
+      style: const TextStyle(color: Colors.white),
+      decoration: InputDecoration(
+        labelText: label,
+        labelStyle: const TextStyle(color: AppColors.gold),
+        filled: true,
+        fillColor: AppColors.obsidian,
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(16),
+          borderSide: BorderSide(color: AppColors.gold.withOpacity(0.35)),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(16),
+          borderSide: const BorderSide(color: AppColors.cyan),
+        ),
+      ),
+    );
+  }
+}
+
+class StandardDem {
+  static List<List<double>> matrix() {
+    return List.generate(
+      24,
+      (r) => List.generate(
+        24,
+        (c) => 260.0 +
+            math.sin(r * 0.64) * 18.0 +
+            math.cos(c * 0.57) * 22.0 +
+            (r - c).abs() * 1.75,
+      ),
+    );
+  }
+}
+
+class Toast {
+  static void show(BuildContext context, String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        backgroundColor: AppColors.matteTeal,
+        content: Text(message, textDirection: TextDirection.rtl),
+      ),
+    );
+  }
+}
+
+double clampD(double value, double min, double max) {
+  if (value < min) return min;
+  if (value > max) return max;
+  return value;
+}
