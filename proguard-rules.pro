@@ -1,0 +1,2 @@
+-keep class com.aboaziza.bouhterrain.** { *; }
+-dontwarn javax.crypto.**
